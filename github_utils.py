@@ -35,3 +35,33 @@ async def get_past_issues(repo_full_name, github_token, max_issues=50):
     except Exception as e:
         logger.error(f"Exception fetching past issues: {e}")
     return []
+
+# --- ADD BELOW TO github_utils.py ---
+async def get_repo_labels(repo_full_name, github_token):
+    """Fetch all available labels in a repo."""
+    url = f"https://api.github.com/repos/{repo_full_name}/labels"
+    headers = {
+        "Authorization": f"Bearer {github_token}",
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "git-ai-bot"
+    }
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(url, headers=headers)
+        if resp.status_code == 200:
+            return [label["name"] for label in resp.json()]
+        return []
+
+
+async def add_label_to_issue(repo_full_name, issue_number, labels, github_token):
+    """Apply labels to a GitHub issue."""
+    url = f"https://api.github.com/repos/{repo_full_name}/issues/{issue_number}/labels"
+    headers = {
+        "Authorization": f"Bearer {github_token}",
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "git-ai-bot"
+    }
+    data = {"labels": labels if isinstance(labels, list) else [labels]}
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(url, headers=headers, json=data)
+        return resp.status_code in (200, 201)
+

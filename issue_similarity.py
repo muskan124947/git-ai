@@ -1,11 +1,7 @@
-from sentence_transformers import SentenceTransformer, util
+# issue_similarity.py
+import numpy as np
 from github_utils import get_past_issues
-
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-
-def compute_issue_embedding(title, body):
-    text = (title or "") + " " + (body or "")
-    return embedding_model.encode(text, convert_to_tensor=True)
+from azure_embeddings import get_azure_embedding
 
 async def find_similar_issues(repo_full_name, new_issue_number, new_title, new_body, github_token, max_results=3):
     # Step 1: Fetch past issues
@@ -13,29 +9,34 @@ async def find_similar_issues(repo_full_name, new_issue_number, new_title, new_b
     if not past_issues:
         return []
 
-    # Step 2: Compute embedding for new issue
-    new_embedding = compute_issue_embedding(new_title, new_body)
+    # Step 2: Embedding for new issue (Azure)
+    new_text = (new_title or "") + " " + (new_body or "")
+    new_embedding = await get_azure_embedding(new_text)
+    if new_embedding is None:
+        return []
 
-    # Step 3: Compute similarity against past issues
     similarities = []
-
     for issue in past_issues:
-        issue_title = issue.get("title", "")
-        issue_body = issue.get("body", "")
-        issue_embedding = compute_issue_embedding(issue_title, issue_body)
+        issue_text = (issue.get("title", "") or "") + " " + (issue.get("body", "") or "")
+        issue_embedding = await get_azure_embedding(issue_text)
+        if issue_embedding is None:
+            continue
 
-        sim_score = util.cos_sim(new_embedding, issue_embedding).item()
+        # Cosine similarity
+        sim_score = float(
+            np.dot(new_embedding, issue_embedding) /
+            (np.linalg.norm(new_embedding) * np.linalg.norm(issue_embedding))
+        )
         similarities.append((sim_score, issue))
 
-    # Step 4: Sort by similarity
+    # Step 3: Sort & filter
     similarities.sort(key=lambda x: x[0], reverse=True)
 
-    # Step 5: Pick top-k similar issues (excluding current issue)
     similar = []
     for score, issue in similarities:
         if issue["number"] == new_issue_number:
             continue
-        if score < 0.55:  # similarity threshold
+        if score < 0.75:  # similarity threshold
             break
         similar.append({
             "url": issue["html_url"],
