@@ -9,8 +9,12 @@ async def find_similar_issues(repo_full_name, new_issue_number, new_title, new_b
     if not past_issues:
         return []
 
-    # Step 2: Embedding for new issue (Azure)
+    # Step 2: Embedding for new issue (Azure) - truncate to avoid token limits
     new_text = (new_title or "") + " " + (new_body or "")
+    # Limit to reasonable length for embeddings (roughly 5000 characters)
+    if len(new_text) > 5000:
+        new_text = new_text[:5000]
+    
     new_embedding = await get_azure_embedding(new_text)
     if new_embedding is None:
         return []
@@ -18,6 +22,10 @@ async def find_similar_issues(repo_full_name, new_issue_number, new_title, new_b
     similarities = []
     for issue in past_issues:
         issue_text = (issue.get("title", "") or "") + " " + (issue.get("body", "") or "")
+        # Truncate each issue text as well
+        if len(issue_text) > 5000:
+            issue_text = issue_text[:5000]
+            
         issue_embedding = await get_azure_embedding(issue_text)
         if issue_embedding is None:
             continue

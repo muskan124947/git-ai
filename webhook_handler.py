@@ -12,10 +12,53 @@ logger = logging.getLogger("gitai")
 
 async def process_github_webhook(request, ai_service, logger):
     """Process GitHub webhook events."""
-    payload = await request.json()
+    try:
+        # Get raw body for debugging
+        body = await request.body()
+        content_type = request.headers.get("content-type", "")
+        logger.info(f"Received webhook - Content-Type: {content_type}, Body length: {len(body)}")
+        
+        # Check if it's JSON content type
+        if "application/json" not in content_type and body:
+            logger.warning(f"Unexpected content type: {content_type}")
+            # Try to parse anyway
+        
+        # Try to parse JSON
+        if not body:
+            logger.warning("Empty request body received")
+            return {"status": "Error", "message": "Empty request body"}
+        
+        # Log first part of body for debugging (but not too much for security)
+        logger.info(f"Raw body preview: {body[:200]}")
+        
+        try:
+            # Use request.json() which should handle the parsing correctly
+            payload = await request.json()
+        except Exception as json_error:
+            # If request.json() fails, try manual parsing
+            logger.error(f"request.json() failed: {json_error}")
+            try:
+                import json as json_module
+                payload = json_module.loads(body.decode('utf-8'))
+                logger.info("Manual JSON parsing succeeded")
+            except Exception as manual_error:
+                logger.error(f"Manual JSON parsing also failed: {manual_error}")
+                return {
+                    "status": "Error", 
+                    "message": f"JSON parsing failed: {str(json_error)}", 
+                    "body_preview": body.decode('utf-8', errors='ignore')[:100]
+                }
+        
+        logger.info(f"Successfully parsed webhook payload - Action: {payload.get('action', 'No action')}")
+        
+    except Exception as e:
+        logger.error(f"Unexpected error in webhook processing: {e}")
+        return {"status": "Error", "message": f"Webhook processing error: {str(e)}"}
 
     if payload.get("action") != "opened":
-        return {"status": "Ignored - not issue creation"}
+        action = payload.get("action", "No action")
+        logger.info(f"Ignoring webhook action: {action}")
+        return {"status": f"Ignored - action is '{action}', not 'opened'"}
 
     issue = payload.get("issue", {})
     repo = payload.get("repository", {})

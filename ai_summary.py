@@ -1,11 +1,13 @@
 # ai_summary.py
 import os
-import openai
+from openai import AzureOpenAI
 
-openai.api_type = "azure"
-openai.api_key = os.getenv("AZURE_OPENAI_API_KEY")
-openai.api_base = os.getenv("AZURE_OPENAI_ENDPOINT")
-openai.api_version = "2024-02-01"
+# Initialize Azure OpenAI client
+client = AzureOpenAI(
+    api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+    api_version="2023-12-01-preview",
+    azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
+)
 
 DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
 
@@ -17,8 +19,8 @@ async def generate_summary(issue_data):
 
     {issue_text}
     """
-    response = openai.ChatCompletion.create(
-        engine=DEPLOYMENT_NAME,
+    response = client.chat.completions.create(
+        model=DEPLOYMENT_NAME,
         messages=[
             {"role": "system", "content": "You are a helpful GitHub issue summarizer."},
             {"role": "user", "content": prompt}
@@ -26,4 +28,4 @@ async def generate_summary(issue_data):
         max_tokens=100,
         temperature=0.5
     )
-    return response["choices"][0]["message"]["content"].strip()
+    return response.choices[0].message.content.strip()

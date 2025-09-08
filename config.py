@@ -19,6 +19,14 @@ AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
 
 # --- GitHub App ---
-APP_ID = int(os.getenv("GITHUB_APP_ID", "0"))
-INSTALLATION_ID = int(os.getenv("GITHUB_INSTALLATION_ID", "0"))
-PRIVATE_KEY_PATH = os.getenv("GITHUB_PRIVATE_KEY_PATH", "git-ai-bot.pem")
+github_app_id = os.getenv("GITHUB_APP_ID")
+github_installation_id = os.getenv("GITHUB_INSTALLATION_ID")
+
+if not github_app_id:
+    raise ValueError("GITHUB_APP_ID environment variable is not set or is empty")
+if not github_installation_id:
+    raise ValueError("GITHUB_INSTALLATION_ID environment variable is not set or is empty")
+
+APP_ID = int(github_app_id)
+INSTALLATION_ID = int(github_installation_id)
+PRIVATE_KEY_PATH = os.getenv("GITHUB_PRIVATE_KEY_PATH", "git-ai-bot-test.2025-09-04.private-key.pem")

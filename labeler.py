@@ -1,16 +1,17 @@
 # labeler.py
 import os
 import logging
-import openai
+from openai import AzureOpenAI
 from sentence_transformers import SentenceTransformer, util
 
 logger = logging.getLogger("gitai")
 
 # --- Azure OpenAI Config ---
-openai.api_type = "azure"
-openai.api_key = os.getenv("AZURE_OPENAI_API_KEY")
-openai.api_base = os.getenv("AZURE_OPENAI_ENDPOINT")
-openai.api_version = "2024-02-01"  # adjust if needed
+client = AzureOpenAI(
+    api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+    api_version="2023-12-01-preview",
+    azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
+)
 DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
 
 # --- Local Embedding Model ---
@@ -33,8 +34,8 @@ async def predict_label_with_openai(title, body, available_labels):
     """
 
     try:
-        response = openai.ChatCompletion.create(
-            engine=DEPLOYMENT_NAME,
+        response = client.chat.completions.create(
+            model=DEPLOYMENT_NAME,
             messages=[
                 {"role": "system", "content": "You are a helpful GitHub issue triage assistant."},
                 {"role": "user", "content": prompt}
@@ -42,7 +43,7 @@ async def predict_label_with_openai(title, body, available_labels):
             max_tokens=20,
             temperature=0
         )
-        return response["choices"][0]["message"]["content"].strip()
+        return response.choices[0].message.content.strip()
     except Exception as e:
         logger.warning(f"OpenAI label prediction failed: {e}")
         return None
