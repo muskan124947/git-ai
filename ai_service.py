@@ -130,20 +130,20 @@ class AIService:
             return self._generate_enhanced_fallback_response(issue_data, repo_context)
     
     async def _collect_repository_context(self, issue_data: Dict[str, Any]) -> Dict[str, Any]:
-        """MSSQL JDBC-focused repository context collection with relevant data only"""
+        """Repository context collection with relevant data from reference repository"""
         
-        # Always target the Microsoft MSSQL JDBC repository for enhanced context
+        # Always target the reference repository for enhanced context
         target_repo = "microsoft/mssql-jdbc"
         original_repo = issue_data.get('repo_name', '')
         
         context = {
-            "mssql_jdbc_commits": [],
-            "mssql_jdbc_open_issues": [],
-            "mssql_jdbc_closed_issues": [],
-            "related_jdbc_issues": [],
-            "jdbc_readme_content": None,
+            "reference_commits": [],
+            "reference_open_issues": [],
+            "reference_closed_issues": [],
+            "related_issues": [],
+            "readme_content": None,
             "original_repo_context": {},
-            "is_mssql_jdbc_repo": original_repo == target_repo
+            "is_reference_repo": original_repo == target_repo
         }
         
         headers = {
@@ -156,52 +156,52 @@ class AIService:
             headers["Authorization"] = f"token {self.github_token}"
         
         try:
-            print(f"🔍 Collecting MSSQL JDBC repository context from: {target_repo}")
+            print(f"🔍 Collecting repository context from: {target_repo}")
             print(f"📋 Original issue repository: {original_repo}")
             
-            # Get MSSQL JDBC recent commits (filter for relevant ones)
-            print("📥 Fetching MSSQL JDBC recent commits...")
-            mssql_commits = await self._get_filtered_commits(target_repo, headers, issue_data, max_commits=30)
-            context["mssql_jdbc_commits"] = mssql_commits
+            # Get reference repository recent commits (filter for relevant ones)
+            print("📥 Fetching reference repository recent commits...")
+            reference_commits = await self._get_filtered_commits(target_repo, headers, issue_data, max_commits=30)
+            context["reference_commits"] = reference_commits
 
-            # Get MSSQL JDBC open issues (filter for relevant ones)
-            print("📥 Fetching MSSQL JDBC open issues...")
-            mssql_open_issues = await self._get_filtered_issues(target_repo, headers, "open", issue_data, max_issues=50)
-            context["mssql_jdbc_open_issues"] = mssql_open_issues
+            # Get reference repository open issues (filter for relevant ones)
+            print("📥 Fetching reference repository open issues...")
+            reference_open_issues = await self._get_filtered_issues(target_repo, headers, "open", issue_data, max_issues=50)
+            context["reference_open_issues"] = reference_open_issues
 
-            # Get MSSQL JDBC closed issues (filter for relevant ones)
-            print("📥 Fetching MSSQL JDBC closed issues...")
-            mssql_closed_issues = await self._get_filtered_issues(target_repo, headers, "closed", issue_data, max_issues=100)
-            context["mssql_jdbc_closed_issues"] = mssql_closed_issues
+            # Get reference repository closed issues (filter for relevant ones)
+            print("📥 Fetching reference repository closed issues...")
+            reference_closed_issues = await self._get_filtered_issues(target_repo, headers, "closed", issue_data, max_issues=100)
+            context["reference_closed_issues"] = reference_closed_issues
 
-            # Find JDBC-specific related issues
-            print("🔍 Finding JDBC-related issues...")
-            all_jdbc_issues = mssql_open_issues + mssql_closed_issues
-            related_jdbc_issues = self._find_jdbc_related_issues(all_jdbc_issues, issue_data)
-            context["related_jdbc_issues"] = related_jdbc_issues
+            # Find related issues
+            print("🔍 Finding related issues...")
+            all_issues = reference_open_issues + reference_closed_issues
+            related_issues = self._find_related_issues(all_issues, issue_data)
+            context["related_issues"] = related_issues
             
-            # Get MSSQL JDBC README for context
-            print("📄 Fetching MSSQL JDBC README...")
-            jdbc_readme = await self._get_readme_content(target_repo, headers)
-            context["jdbc_readme_content"] = jdbc_readme
+            # Get reference repository README for context
+            print("📄 Fetching reference repository README...")
+            readme = await self._get_readme_content(target_repo, headers)
+            context["readme_content"] = readme
             
-            # If the original issue is NOT from mssql-jdbc repo, get minimal context from original repo
-            if not context["is_mssql_jdbc_repo"]:
+            # If the original issue is NOT from reference repo, get minimal context from original repo
+            if not context["is_reference_repo"]:
                 print(f"📄 Getting minimal context from original repo: {original_repo}")
                 original_context = await self._get_minimal_original_context(original_repo, headers, issue_data)
                 context["original_repo_context"] = original_context
                 
         except Exception as e:
-            print(f"Error collecting MSSQL JDBC repository context: {str(e)}")
+            print(f"Error collecting repository context: {str(e)}")
         
         return context
 
     async def _get_filtered_commits(self, repo_name: str, headers: dict, issue_data: Dict, max_commits: int = 30) -> List[Dict]:
-        """Get commits filtered for JDBC/connection relevance"""
+        """Get commits filtered for relevance"""
         commits = []
         
-        # JDBC-specific keywords to filter commits
-        jdbc_keywords = ['jdbc', 'connection', 'pool', 'timeout', 'sql', 'driver', 'database', 'hikari', 'dbcp', 'leak', 'close', 'statement', 'resultset', 'transaction']
+        # General keywords to filter commits for relevance
+        relevant_keywords = ['fix', 'bug', 'issue', 'error', 'connection', 'timeout', 'performance', 'exception', 'feature', 'implement', 'update', 'improve']
         
         try:
             commits_url = f"https://api.github.com/repos/{repo_name}/commits"
@@ -214,8 +214,8 @@ class AIService:
                 for commit in commit_data:
                     commit_message = commit["commit"]["message"].lower()
                     
-                    # Filter for JDBC-relevant commits
-                    is_relevant = any(keyword in commit_message for keyword in jdbc_keywords)
+                    # Filter for relevant commits
+                    is_relevant = any(keyword in commit_message for keyword in relevant_keywords)
                     
                     # Also include commits that match current issue keywords
                     issue_keywords = self._extract_keywords(issue_data.get('issue_title', '') + ' ' + issue_data.get('issue_body', ''))
@@ -229,21 +229,21 @@ class AIService:
                             "author": commit["commit"]["author"]["name"],
                             "date": commit["commit"]["author"]["date"],
                             "url": commit["html_url"],
-                            "relevance": "jdbc-specific"
+                            "relevance": "relevant"
                         })
                     
-            print(f"✅ Collected {len(commits)} JDBC-relevant commits from {max_commits} total")
+            print(f"✅ Collected {len(commits)} relevant commits from {max_commits} total")
         except Exception as e:
             print(f"Error fetching filtered commits: {e}")
             
         return commits
 
     async def _get_filtered_issues(self, repo_name: str, headers: dict, state: str, issue_data: Dict, max_issues: int = 50) -> List[Dict]:
-        """Get issues filtered for JDBC/connection relevance"""
+        """Get issues filtered for relevance"""
         issues = []
         
-        # JDBC-specific keywords and patterns
-        jdbc_keywords = ['jdbc', 'connection', 'pool', 'timeout', 'sql', 'driver', 'database', 'hikari', 'dbcp', 'leak', 'statement', 'resultset', 'transaction', 'deadlock', 'performance']
+        # General keywords and patterns for relevance
+        relevant_keywords = ['bug', 'fix', 'issue', 'error', 'connection', 'timeout', 'performance', 'exception', 'feature', 'enhancement', 'problem', 'help']
         
         try:
             issues_url = f"https://api.github.com/repos/{repo_name}/issues"
@@ -264,12 +264,12 @@ class AIService:
                     
                     issue_text = (issue["title"] + " " + issue.get("body", "")).lower()
                     
-                    # Filter for JDBC-relevant issues
-                    is_relevant = any(keyword in issue_text for keyword in jdbc_keywords)
+                    # Filter for relevant issues
+                    is_relevant = any(keyword in issue_text for keyword in relevant_keywords)
                     
                     # Also check labels for relevance
                     issue_labels = [label["name"].lower() for label in issue.get("labels", [])]
-                    relevant_labels = ['bug', 'performance', 'connection', 'timeout', 'leak', 'pool']
+                    relevant_labels = ['bug', 'performance', 'enhancement', 'feature', 'help', 'question']
                     if any(label in issue_labels for label in relevant_labels):
                         is_relevant = True
                     
@@ -285,31 +285,31 @@ class AIService:
                             "url": issue["html_url"],
                             "user": issue["user"]["login"],
                             "comments": issue.get("comments", 0),
-                            "relevance": "jdbc-specific"
+                            "relevance": "relevant"
                         })
                     
-            print(f"✅ Collected {len(issues)} JDBC-relevant {state} issues from {max_issues} total")
+            print(f"✅ Collected {len(issues)} relevant {state} issues from {max_issues} total")
         except Exception as e:
             print(f"Error fetching filtered {state} issues: {e}")
             
         return issues
 
-    def _find_jdbc_related_issues(self, all_issues: List[Dict], current_issue: Dict) -> List[Dict]:
-        """Find JDBC issues specifically related to the current issue"""
+    def _find_related_issues(self, all_issues: List[Dict], current_issue: Dict) -> List[Dict]:
+        """Find issues specifically related to the current issue"""
         related = []
         current_title = current_issue.get('issue_title', '').lower()
         current_body = current_issue.get('issue_body', '').lower()
         
-        # JDBC-specific similarity keywords
-        jdbc_similarity_keywords = {
-            'connection': ['connection', 'connect', 'pool', 'datasource'],
+        # General similarity keywords for better matching
+        similarity_keywords = {
+            'connection': ['connection', 'connect', 'network'],
             'timeout': ['timeout', 'hang', 'freeze', 'stuck', 'wait'],
-            'leak': ['leak', 'memory', 'close', 'resource'],
-            'performance': ['slow', 'performance', 'speed', 'optimization'],
             'error': ['error', 'exception', 'fail', 'crash'],
-            'transaction': ['transaction', 'commit', 'rollback', 'isolation'],
-            'security': ['security', 'ssl', 'tls', 'encrypt', 'auth'],
-            'configuration': ['config', 'setting', 'parameter', 'property']
+            'performance': ['slow', 'performance', 'speed', 'optimization'],
+            'bug': ['bug', 'issue', 'problem', 'broken'],
+            'feature': ['feature', 'enhancement', 'implement', 'add'],
+            'configuration': ['config', 'setting', 'parameter', 'property'],
+            'security': ['security', 'auth', 'permission', 'access']
         }
         
         # Extract current issue keywords
@@ -321,8 +321,8 @@ class AIService:
             issue_body = issue["body"].lower()
             issue_text = issue_title + " " + issue_body
             
-            # JDBC category matching
-            for category, keywords in jdbc_similarity_keywords.items():
+            # Category matching
+            for category, keywords in similarity_keywords.items():
                 current_has_category = any(kw in (current_title + " " + current_body) for kw in keywords)
                 issue_has_category = any(kw in issue_text for kw in keywords)
                 
@@ -334,9 +334,9 @@ class AIService:
             common_keywords = set(current_keywords) & set(issue_keywords)
             similarity_score += len(common_keywords) * 2
             
-            # Error pattern matching (specific to JDBC)
-            jdbc_error_patterns = ['timeout', 'connection', 'pool', 'leak', 'deadlock', 'transaction', 'statement']
-            for pattern in jdbc_error_patterns:
+            # Error pattern matching
+            error_patterns = ['timeout', 'connection', 'error', 'exception', 'bug', 'fail']
+            for pattern in error_patterns:
                 if pattern in current_title and pattern in issue_title:
                     similarity_score += 4
                 elif pattern in (current_title + current_body) and pattern in issue_text:
@@ -344,7 +344,7 @@ class AIService:
             
             # Label-based similarity
             issue_labels = [label.lower() for label in issue["labels"]]
-            important_labels = ['bug', 'performance', 'connection', 'timeout', 'enhancement']
+            important_labels = ['bug', 'performance', 'enhancement', 'feature', 'help']
             common_labels = set(important_labels) & set(issue_labels)
             similarity_score += len(common_labels) * 3
                     
@@ -576,48 +576,48 @@ class AIService:
         return "default"
 
     def _get_system_prompt(self, issue_type: str) -> str:
-        """Get MSSQL JDBC specialized system prompt based on issue type"""
+        """Get specialized system prompt based on issue type"""
         
-        base_prompt = "You are Git.AI, an expert Microsoft SQL Server JDBC driver specialist and GitHub issue resolution assistant. You have deep expertise in JDBC connectivity, connection pooling, SQL Server integration, and Microsoft's mssql-jdbc driver implementation. "
+        base_prompt = "You are Git.AI, an expert software development assistant and GitHub issue resolution specialist. You have deep expertise in software engineering, debugging, problem-solving, and providing comprehensive technical solutions. "
         
         type_specific = {
-            "bug": "You excel at diagnosing JDBC connection issues, SQL Server connectivity problems, connection pool leaks, timeout issues, and driver-specific bugs. Focus on systematic troubleshooting with specific JDBC driver solutions and Microsoft SQL Server best practices.",
-            "feature": "You specialize in JDBC feature design and SQL Server integration planning. Focus on Microsoft JDBC driver capabilities, SQL Server feature compatibility, and performance optimization strategies.",
-            "documentation": "You specialize in JDBC documentation and SQL Server connectivity guides. Focus on clear examples, connection string configurations, driver setup, and troubleshooting guides specific to Microsoft environments.",
-            "question": "You provide expert guidance on Microsoft JDBC driver usage, SQL Server connectivity, and best practices. Focus on practical solutions, configuration examples, and proven implementation patterns.",
-            "default": "You provide comprehensive JDBC driver analysis and Microsoft SQL Server connectivity solutions with detailed implementation guidance and industry best practices."
+            "bug": "You excel at diagnosing software issues, analyzing error patterns, debugging problems, and providing systematic troubleshooting solutions. Focus on root cause analysis with specific technical solutions and industry best practices.",
+            "feature": "You specialize in feature design and software development planning. Focus on implementation strategies, technical architecture, and development best practices.",
+            "documentation": "You specialize in technical documentation and software guides. Focus on clear examples, configuration details, setup instructions, and comprehensive troubleshooting guides.",
+            "question": "You provide expert guidance on software development, technical implementation, and best practices. Focus on practical solutions, examples, and proven implementation patterns.",
+            "default": "You provide comprehensive technical analysis and software development solutions with detailed implementation guidance and industry best practices."
         }
         
-        jdbc_expertise = " Your responses leverage extensive knowledge of the Microsoft mssql-jdbc repository, known issues, proven solutions, and the latest driver developments. Always provide specific, actionable solutions with relevant code examples and configuration details."
+        expertise_note = " Your responses leverage extensive knowledge of software repositories, known patterns, proven solutions, and the latest development practices. Always provide specific, actionable solutions with relevant code examples and configuration details."
         
-        return base_prompt + type_specific.get(issue_type, type_specific["default"]) + jdbc_expertise
+        return base_prompt + type_specific.get(issue_type, type_specific["default"]) + expertise_note
 
     def _build_enhanced_prompt(self, issue_data: Dict[str, Any], repo_context: Dict[str, Any], issue_type: str) -> str:
-        """Build MSSQL JDBC-focused prompt using relevant repository context"""
+        """Build comprehensive prompt using relevant repository context"""
         
         prompt_parts = []
         
-        prompt_parts.append("**MICROSOFT SQL SERVER JDBC DRIVER EXPERT ANALYSIS**\n")
+        prompt_parts.append("**COMPREHENSIVE TECHNICAL ANALYSIS**\n")
         
         original_repo = issue_data.get('repo_name', 'Unknown')
-        is_mssql_jdbc = repo_context.get('is_mssql_jdbc_repo', False)
+        is_reference_repo = repo_context.get('is_reference_repo', False)
         
         prompt_parts.append(f"**Original Issue Repository:** {original_repo}")
         prompt_parts.append(f"**Issue Type:** {issue_type.upper()}")
-        prompt_parts.append(f"**MSSQL JDBC Expert Context:** {'DIRECT' if is_mssql_jdbc else 'CROSS-REFERENCE'}")
+        prompt_parts.append(f"**Reference Repository Context:** {'DIRECT' if is_reference_repo else 'CROSS-REFERENCE'}")
         prompt_parts.append("")
         
-        # MSSQL JDBC Repository Intelligence
-        mssql_commits = repo_context.get('mssql_jdbc_commits', [])
-        mssql_open_issues = repo_context.get('mssql_jdbc_open_issues', [])
-        mssql_closed_issues = repo_context.get('mssql_jdbc_closed_issues', [])
-        related_jdbc_issues = repo_context.get('related_jdbc_issues', [])
+        # Reference Repository Intelligence
+        reference_commits = repo_context.get('reference_commits', [])
+        reference_open_issues = repo_context.get('reference_open_issues', [])
+        reference_closed_issues = repo_context.get('reference_closed_issues', [])
+        related_issues = repo_context.get('related_issues', [])
         
-        prompt_parts.append("**Microsoft MSSQL JDBC Repository Intelligence:**")
-        prompt_parts.append(f"- JDBC-Relevant Commits Analyzed: {len(mssql_commits)}")
-        prompt_parts.append(f"- JDBC-Related Open Issues: {len(mssql_open_issues)}")
-        prompt_parts.append(f"- JDBC-Related Resolved Issues: {len(mssql_closed_issues)}")
-        prompt_parts.append(f"- Highly Relevant JDBC Issues: {len(related_jdbc_issues)}")
+        prompt_parts.append("**Reference Repository Intelligence:**")
+        prompt_parts.append(f"- Relevant Commits Analyzed: {len(reference_commits)}")
+        prompt_parts.append(f"- Related Open Issues: {len(reference_open_issues)}")
+        prompt_parts.append(f"- Related Resolved Issues: {len(reference_closed_issues)}")
+        prompt_parts.append(f"- Highly Relevant Issues: {len(related_issues)}")
         prompt_parts.append("")
         
         # Current issue analysis
@@ -629,8 +629,8 @@ class AIService:
         prompt_parts.append(f"- Description: {issue_data.get('issue_body', 'No description provided')}")
         prompt_parts.append("")
 
-        # Original repository context (if different from mssql-jdbc)
-        if not is_mssql_jdbc:
+        # Original repository context (if different from reference repo)
+        if not is_reference_repo:
             original_context = repo_context.get('original_repo_context', {})
             if original_context:
                 prompt_parts.append(f"**Original Repository Context ({original_repo}):**")
@@ -641,10 +641,10 @@ class AIService:
                     prompt_parts.append(f"- Primary Languages: {', '.join(languages[:3])}")
                 prompt_parts.append("")
 
-        # Highly relevant JDBC issues
-        if related_jdbc_issues:
-            prompt_parts.append("**Most Relevant Microsoft MSSQL JDBC Issues:**")
-            for issue in related_jdbc_issues[:6]:
+        # Highly relevant issues
+        if related_issues:
+            prompt_parts.append("**Most Relevant Reference Repository Issues:**")
+            for issue in related_issues[:6]:
                 state_indicator = "🔴 OPEN" if issue['state'] == 'open' else "✅ RESOLVED"
                 prompt_parts.append(f"- {state_indicator} #{issue['number']}: {issue['title']} (relevance: {issue['similarity_score']})")
                 if issue.get('body') and len(issue['body']) > 50:
@@ -653,128 +653,128 @@ class AIService:
                     prompt_parts.append(f"  🎯 PROVEN SOLUTION AVAILABLE - analyze resolution patterns")
                 prompt_parts.append("")
 
-        # Recent JDBC development activity
-        if mssql_commits:
-            prompt_parts.append("**Recent Microsoft MSSQL JDBC Development Activity:**")
-            prompt_parts.append("📋 Recent JDBC-relevant commits:")
-            for commit in mssql_commits[:6]:
+        # Recent development activity
+        if reference_commits:
+            prompt_parts.append("**Recent Reference Repository Development Activity:**")
+            prompt_parts.append("📋 Recent relevant commits:")
+            for commit in reference_commits[:6]:
                 prompt_parts.append(f"- {commit['sha']}: {commit['message'][:120]}... (by {commit['author']})")
             prompt_parts.append("")
 
-        # Current JDBC issues landscape
-        if mssql_open_issues:
-            prompt_parts.append("**Current Microsoft MSSQL JDBC Issues Status:**")
+        # Current issues landscape
+        if reference_open_issues:
+            prompt_parts.append("**Current Reference Repository Issues Status:**")
             # Focus on high-impact open issues
-            high_impact_issues = [issue for issue in mssql_open_issues[:15] 
+            high_impact_issues = [issue for issue in reference_open_issues[:15] 
                                 if issue.get('comments', 0) > 2 or 
                                    any(label in ['bug', 'performance', 'critical'] 
                                        for label in [l.lower() for l in issue.get('labels', [])])]
             
             if high_impact_issues:
-                prompt_parts.append("⚠️ High-impact open JDBC issues (community attention):")
+                prompt_parts.append("⚠️ High-impact open issues (community attention):")
                 for issue in high_impact_issues[:4]:
                     prompt_parts.append(f"- #{issue['number']}: {issue['title']} ({issue['comments']} comments)")
             prompt_parts.append("")
 
-        # MSSQL JDBC resolved patterns
-        if mssql_closed_issues:
-            prompt_parts.append("**Microsoft MSSQL JDBC Resolution Patterns:**")
+        # Resolution patterns from closed issues
+        if reference_closed_issues:
+            prompt_parts.append("**Reference Repository Resolution Patterns:**")
             # Focus on recently resolved issues with good solutions
-            recent_resolved = [issue for issue in mssql_closed_issues[:20] 
+            recent_resolved = [issue for issue in reference_closed_issues[:20] 
                              if issue.get('comments', 0) > 1]
             
             if recent_resolved:
-                prompt_parts.append("✅ Recently resolved JDBC issues (proven solutions):")
+                prompt_parts.append("✅ Recently resolved issues (proven solutions):")
                 for issue in recent_resolved[:4]:
                     prompt_parts.append(f"- #{issue['number']}: {issue['title']} ({issue['comments']} comments)")
                     if issue.get('body'):
                         prompt_parts.append(f"  Solution context: {issue['body'][:150]}...")
             prompt_parts.append("")
 
-        # MSSQL JDBC Documentation context
-        if repo_context.get('jdbc_readme_content'):
-            prompt_parts.append("**Microsoft MSSQL JDBC Official Documentation:**")
-            prompt_parts.append(f"```\n{repo_context['jdbc_readme_content'][:1200]}...\n```")
+        # Documentation context
+        if repo_context.get('readme_content'):
+            prompt_parts.append("**Reference Repository Official Documentation:**")
+            prompt_parts.append(f"```\n{repo_context['readme_content'][:1200]}...\n```")
             prompt_parts.append("")
 
         # Expert resolution task
-        prompt_parts.append("**EXPERT MSSQL JDBC RESOLUTION TASK:**")
-        prompt_parts.append("Using your Microsoft SQL Server JDBC driver expertise and the comprehensive analysis above, provide a DETAILED, EXPERT-LEVEL solution:")
+        prompt_parts.append("**EXPERT TECHNICAL RESOLUTION TASK:**")
+        prompt_parts.append("Using your software development expertise and the comprehensive analysis above, provide a DETAILED, EXPERT-LEVEL solution:")
         prompt_parts.append("")
-        prompt_parts.append("1. **JDBC Driver Root Cause Analysis** (2-3 paragraphs)")
-        prompt_parts.append("   - Apply MSSQL JDBC expertise to identify the core issue")
-        prompt_parts.append("   - Reference specific JDBC driver patterns from related issues above")
-        prompt_parts.append("   - Connect to known Microsoft SQL Server connectivity patterns")
+        prompt_parts.append("1. **Root Cause Analysis** (2-3 paragraphs)")
+        prompt_parts.append("   - Apply technical expertise to identify the core issue")
+        prompt_parts.append("   - Reference specific patterns from related issues above")
+        prompt_parts.append("   - Connect to known software development patterns")
         prompt_parts.append("")
-        prompt_parts.append("2. **Microsoft JDBC Driver Solution Steps** (6-10 detailed steps)")
-        prompt_parts.append("   - Specific to Microsoft mssql-jdbc driver implementation")
+        prompt_parts.append("2. **Technical Solution Steps** (6-10 detailed steps)")
+        prompt_parts.append("   - Specific implementation guidance")
         prompt_parts.append("   - Include exact configuration parameters and values")
-        prompt_parts.append("   - Reference lessons from resolved JDBC issues above")
+        prompt_parts.append("   - Reference lessons from resolved issues above")
         prompt_parts.append("")
-        prompt_parts.append("3. **JDBC Code Examples & Configuration** (Multiple examples)")
-        prompt_parts.append("   - Connection string examples specific to SQL Server")
-        prompt_parts.append("   - Driver configuration examples")
-        prompt_parts.append("   - Connection pool configuration (HikariCP, DBCP, etc.)")
-        prompt_parts.append("   - Error handling and retry logic examples")
+        prompt_parts.append("3. **Code Examples & Configuration** (Multiple examples)")
+        prompt_parts.append("   - Relevant code snippets and examples")
+        prompt_parts.append("   - Configuration examples")
+        prompt_parts.append("   - Implementation patterns and best practices")
+        prompt_parts.append("   - Error handling and validation examples")
         prompt_parts.append("")
-        prompt_parts.append("4. **Microsoft JDBC Driver Context** (1-2 paragraphs)")
-        prompt_parts.append("   - How recent JDBC driver developments inform this solution")
-        prompt_parts.append("   - Specific Microsoft SQL Server considerations")
-        prompt_parts.append("   - Driver version compatibility and recommendations")
+        prompt_parts.append("4. **Technical Context** (1-2 paragraphs)")
+        prompt_parts.append("   - How recent developments inform this solution")
+        prompt_parts.append("   - Specific technical considerations")
+        prompt_parts.append("   - Version compatibility and recommendations")
         prompt_parts.append("")
-        prompt_parts.append("5. **JDBC Best Practices & Prevention** (5-7 recommendations)")
-        prompt_parts.append("   - Microsoft JDBC driver-specific best practices")
-        prompt_parts.append("   - SQL Server connectivity optimization")
-        prompt_parts.append("   - Connection pool tuning and monitoring")
+        prompt_parts.append("5. **Best Practices & Prevention** (5-7 recommendations)")
+        prompt_parts.append("   - Technical best practices")
+        prompt_parts.append("   - Performance optimization")
+        prompt_parts.append("   - Monitoring and maintenance")
         prompt_parts.append("   - Common pitfall prevention")
         prompt_parts.append("")
-        prompt_parts.append("6. **JDBC Testing & Validation** (4-6 approaches)")
-        prompt_parts.append("   - Microsoft JDBC driver testing strategies")
-        prompt_parts.append("   - SQL Server connectivity validation")
-        prompt_parts.append("   - Performance benchmarking approaches")
+        prompt_parts.append("6. **Testing & Validation** (4-6 approaches)")
+        prompt_parts.append("   - Testing strategies")
+        prompt_parts.append("   - Validation approaches")
+        prompt_parts.append("   - Performance benchmarking")
         prompt_parts.append("   - Monitoring and alerting setup")
         prompt_parts.append("")
         
         prompt_parts.append("**EXPERT OUTPUT REQUIREMENTS:**")
-        prompt_parts.append("- COMPREHENSIVE MSSQL JDBC EXPERT RESPONSE (aim for 4500+ characters)")
-        prompt_parts.append("- Reference specific JDBC issue numbers and commit SHAs from analysis above")
-        prompt_parts.append("- Include multiple practical Microsoft JDBC driver code examples")
+        prompt_parts.append("- COMPREHENSIVE EXPERT RESPONSE (aim for 4500+ characters)")
+        prompt_parts.append("- Reference specific issue numbers and commit SHAs from analysis above")
+        prompt_parts.append("- Include multiple practical code examples")
         prompt_parts.append("- Provide expert-level implementation guidance with exact parameters")
-        prompt_parts.append("- Connect solution to Microsoft JDBC driver patterns and SQL Server best practices")
-        prompt_parts.append("- Each section should demonstrate deep JDBC driver expertise and be immediately actionable")
-        prompt_parts.append("- Focus on Microsoft-specific implementations and proven solutions from the JDBC repository")
+        prompt_parts.append("- Connect solution to proven patterns and best practices")
+        prompt_parts.append("- Each section should demonstrate deep technical expertise and be immediately actionable")
+        prompt_parts.append("- Focus on proven implementations and solutions from the reference repository")
         
         return "\n".join(prompt_parts)
 
     def _generate_enhanced_fallback_response(self, issue_data: Dict[str, Any], repo_context: Dict[str, Any]) -> str:
-        """Generate enhanced Microsoft MSSQL JDBC-focused fallback response with repository context"""
+        """Generate enhanced software development-focused fallback response with repository context"""
         
-        related_jdbc_count = len(repo_context.get('related_jdbc_issues', []))
-        mssql_commits_count = len(repo_context.get('mssql_jdbc_commits', []))
-        mssql_open_count = len(repo_context.get('mssql_jdbc_open_issues', []))
-        mssql_closed_count = len(repo_context.get('mssql_jdbc_closed_issues', []))
-        is_mssql_jdbc = repo_context.get('is_mssql_jdbc_repo', False)
+        related_issues_count = len(repo_context.get('related_issues', []))
+        reference_commits_count = len(repo_context.get('reference_commits', []))
+        reference_open_count = len(repo_context.get('reference_open_issues', []))
+        reference_closed_count = len(repo_context.get('reference_closed_issues', []))
+        is_reference_repo = repo_context.get('is_reference_repo', False)
         
         # Get some specific issue details for better context
         issue_title = issue_data.get('issue_title', 'Unknown Issue')
         issue_body = issue_data.get('issue_body', '')
         repo_name = issue_data.get('repo_name', 'Unknown')
         
-        # Extract relevant JDBC issues for reference
+        # Extract relevant issues for reference
         related_issues_text = ""
-        if repo_context.get('related_jdbc_issues'):
-            related_issues_text = "\n**🔗 Related Microsoft MSSQL JDBC Issues:**\n"
-            for issue in repo_context['related_jdbc_issues'][:3]:
+        if repo_context.get('related_issues'):
+            related_issues_text = "\n**🔗 Related Repository Issues:**\n"
+            for issue in repo_context['related_issues'][:3]:
                 state = "✅ RESOLVED" if issue['state'] == 'closed' else "🔴 OPEN"
                 related_issues_text += f"- {state} #{issue['number']}: {issue['title'][:80]}...\n"
                 if issue['state'] == 'closed':
                     related_issues_text += f"  💡 *This was successfully resolved - check solution patterns*\n"
         
-        return f"""**🔧 Microsoft SQL Server JDBC Driver Expert Analysis**
+        return f"""**🔧 Expert Software Development Analysis**
 
 **Repository Context:** {repo_name}
 **Issue:** #{issue_data.get('issue_number', 'N/A')} - {issue_title}
-**MSSQL JDBC Intelligence:** {'DIRECT ANALYSIS' if is_mssql_jdbc else 'CROSS-REFERENCE EXPERTISE'}
+**Development Intelligence:** {'DIRECT ANALYSIS' if is_reference_repo else 'CROSS-REFERENCE EXPERTISE'}
 
 **� Microsoft MSSQL JDBC Repository Intelligence:**
 - 🔍 Analyzed {mssql_commits_count} JDBC-relevant commits
@@ -860,10 +860,10 @@ Based on analysis of {mssql_commits_count} recent JDBC commits and {related_jdbc
 - Azure SQL Database connectivity guidelines
 - JDBC driver version compatibility matrix
 
-*This analysis leverages expertise from {related_jdbc_count} related Microsoft MSSQL JDBC issues and {mssql_commits_count} recent driver development activities.*
+*This analysis leverages expertise from {related_issues_count} related issues and {reference_commits_count} recent development activities.*
 
 ---
-**Generated by Git.AI Enhanced Assistant with Microsoft SQL Server JDBC Specialization**
+**Generated by Git.AI Enhanced Assistant with Software Development Specialization**
 """
 
     # Keep original prompt building method for compatibility
