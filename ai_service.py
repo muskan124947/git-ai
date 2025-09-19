@@ -197,11 +197,8 @@ class AIService:
         return context
 
     async def _get_filtered_commits(self, repo_name: str, headers: dict, issue_data: Dict, max_commits: int = 30) -> List[Dict]:
-        """Get commits filtered for relevance"""
+        """Get commits filtered for relevance using AI-powered analysis"""
         commits = []
-        
-        # General keywords to filter commits for relevance
-        relevant_keywords = ['fix', 'bug', 'issue', 'error', 'connection', 'timeout', 'performance', 'exception', 'feature', 'implement', 'update', 'improve']
         
         try:
             commits_url = f"https://api.github.com/repos/{repo_name}/commits"
@@ -211,32 +208,180 @@ class AIService:
             if response.status_code == 200:
                 commit_data = response.json()
                 
-                for commit in commit_data:
+                # Prepare data for AI filtering
+                issue_context = f"Issue: {issue_data.get('issue_title', '')}\n{issue_data.get('issue_body', '')}"
+                
+                # Process commits in batches for AI analysis
+                batch_size = 10
+                for i in range(0, len(commit_data), batch_size):
+                    batch = commit_data[i:i+batch_size]
+                    relevant_commits = await self._ai_filter_commits(batch, issue_context)
+                    commits.extend(relevant_commits)
+                    
+                # Ensure we have at least 2 commits - add most recent if needed
+                if len(commits) < 2 and len(commit_data) >= 2:
+                    print("📝 Adding recent commits to ensure minimum of 2...")
+                    for commit in commit_data[:4]:  # Check first 4 commits
+                        if len(commits) >= 2:
+                            break
+                        # Add if not already included
+                        if not any(c["sha"] == commit["sha"][:7] for c in commits):
+                            commits.append({
+                                "sha": commit["sha"][:7],
+                                "message": commit["commit"]["message"][:250],
+                                "author": commit["commit"]["author"]["name"],
+                                "date": commit["commit"]["author"]["date"],
+                                "url": commit["html_url"],
+                                "ai_filtered": False  # Mark as backup commit
+                            })
+                    
+            print(f"✅ AI-filtered {len(commits)} commits from {len(commit_data)} total (minimum 2 guaranteed)")
+        except Exception as e:
+            print(f"Error in AI commit filtering: {e}")
+            # Fallback to simple filtering if AI fails
+            commits = await self._fallback_commit_filter(repo_name, headers, issue_data, max_commits)
+            
+        return commits
+
+    async def _ai_filter_commits(self, commits_batch: List[Dict], issue_context: str) -> List[Dict]:
+        """Use OpenAI to intelligently filter commits for relevance"""
+        try:
+            # Prepare commit summaries for AI analysis
+            commit_summaries = []
+            for i, commit in enumerate(commits_batch):
+                commit_summaries.append(f"{i}: {commit['commit']['message'][:200]}")
+            
+            commits_text = "\n".join(commit_summaries)
+            
+            # AI prompt for commit filtering
+            filter_prompt = f"""You are an expert software engineer analyzing commit relevance.
+
+ISSUE CONTEXT:
+{issue_context}
+
+COMMITS TO ANALYZE:
+{commits_text}
+
+TASK: Identify which commits are HIGHLY RELEVANT to solving the above issue.
+
+CRITERIA for HIGH RELEVANCE:
+- Commits that fix similar bugs or issues
+- Commits that modify the same methods/classes mentioned in the issue
+- Commits that address similar technical problems
+- Commits that improve related functionality
+
+CRITERIA for LOW RELEVANCE:
+- General documentation updates
+- Unrelated feature additions
+- Different technical areas
+- Cosmetic changes
+
+OUTPUT FORMAT:
+Return only the numbers (0-{len(commits_batch)-1}) of HIGHLY RELEVANT commits, separated by commas.
+If no commits are highly relevant, return "NONE".
+
+HIGHLY RELEVANT COMMIT NUMBERS:"""
+
+            # Call OpenAI API
+            if self.use_new_client:
+                response = self.client.chat.completions.create(
+                    model=self.deployment_name,
+                    messages=[
+                        {"role": "system", "content": "You are an expert code analyst specializing in commit relevance assessment."},
+                        {"role": "user", "content": filter_prompt}
+                    ],
+                    temperature=0.1,  # Low temperature for consistent filtering
+                    max_tokens=100
+                )
+                ai_response = response.choices[0].message.content.strip()
+            else:
+                response = self.legacy_client.chat.completions.create(
+                    model=self.deployment_name,
+                    messages=[
+                        {"role": "system", "content": "You are an expert code analyst specializing in commit relevance assessment."},
+                        {"role": "user", "content": filter_prompt}
+                    ],
+                    temperature=0.1,
+                    max_tokens=100
+                )
+                ai_response = response.choices[0].message.content.strip()
+            
+            # Parse AI response and extract relevant commits
+            relevant_commits = []
+            if ai_response.upper() != "NONE":
+                try:
+                    relevant_indices = [int(x.strip()) for x in ai_response.split(',') if x.strip().isdigit()]
+                    for idx in relevant_indices:
+                        if 0 <= idx < len(commits_batch):
+                            commit = commits_batch[idx]
+                            relevant_commits.append({
+                                "sha": commit["sha"][:7],
+                                "message": commit["commit"]["message"][:250],
+                                "author": commit["commit"]["author"]["name"],
+                                "date": commit["commit"]["author"]["date"],
+                                "url": commit["html_url"],
+                                "ai_filtered": True
+                            })
+                except ValueError as e:
+                    print(f"Error parsing AI response: {e}")
+            
+            return relevant_commits
+            
+        except Exception as e:
+            print(f"Error in AI commit filtering: {e}")
+            return []
+
+    async def _fallback_commit_filter(self, repo_name: str, headers: dict, issue_data: Dict, max_commits: int) -> List[Dict]:
+        """Fallback filtering method if AI filtering fails"""
+        commits = []
+        
+        try:
+            commits_url = f"https://api.github.com/repos/{repo_name}/commits"
+            params = {"per_page": max_commits}
+            
+            response = requests.get(commits_url, headers=headers, params=params, timeout=15)
+            if response.status_code == 200:
+                commit_data = response.json()
+                
+                # Extract key terms from issue
+                issue_text = (issue_data.get('issue_title', '') + ' ' + issue_data.get('issue_body', '')).lower()
+                key_terms = self._extract_key_terms(issue_text)
+                
+                for commit in commit_data[:10]:  # Limit to most recent 10 for fallback
                     commit_message = commit["commit"]["message"].lower()
                     
-                    # Filter for relevant commits
-                    is_relevant = any(keyword in commit_message for keyword in relevant_keywords)
-                    
-                    # Also include commits that match current issue keywords
-                    issue_keywords = self._extract_keywords(issue_data.get('issue_title', '') + ' ' + issue_data.get('issue_body', ''))
-                    if any(keyword in commit_message for keyword in issue_keywords[:5]):
-                        is_relevant = True
-                    
-                    if is_relevant:
+                    # Simple relevance check
+                    if any(term in commit_message for term in key_terms):
                         commits.append({
                             "sha": commit["sha"][:7],
                             "message": commit["commit"]["message"][:250],
                             "author": commit["commit"]["author"]["name"],
                             "date": commit["commit"]["author"]["date"],
                             "url": commit["html_url"],
-                            "relevance": "relevant"
+                            "ai_filtered": False
                         })
                     
-            print(f"✅ Collected {len(commits)} relevant commits from {max_commits} total")
         except Exception as e:
-            print(f"Error fetching filtered commits: {e}")
+            print(f"Error in fallback filtering: {e}")
             
         return commits
+
+    def _extract_key_terms(self, text: str) -> List[str]:
+        """Extract key terms for fallback filtering"""
+        import re
+        
+        # Extract method names, class names, and key technical terms
+        terms = []
+        
+        # Method names (camelCase with parentheses)
+        method_matches = re.findall(r'\b[a-z][a-zA-Z]*\(\)', text)
+        terms.extend([match.replace('()', '') for match in method_matches])
+        
+        # Common technical terms
+        tech_terms = ['fix', 'bug', 'error', 'issue', 'batch', 'statement', 'result', 'connection', 'jdbc', 'sql']
+        terms.extend([term for term in tech_terms if term in text])
+        
+        return list(set(terms))
 
     async def _get_filtered_issues(self, repo_name: str, headers: dict, state: str, issue_data: Dict, max_issues: int = 50) -> List[Dict]:
         """Get issues filtered for relevance"""
@@ -294,8 +439,90 @@ class AIService:
             
         return issues
 
-    def _find_related_issues(self, all_issues: List[Dict], current_issue: Dict) -> List[Dict]:
-        """Find issues specifically related to the current issue"""
+    async def _find_related_issues(self, all_issues: List[Dict], current_issue: Dict) -> List[Dict]:
+        """Find issues specifically related to the current issue using AI-powered filtering"""
+        related = []
+        current_title = current_issue.get('issue_title', '')
+        current_body = current_issue.get('issue_body', '')
+        
+        if not all_issues:
+            return related
+            
+        print(f"🤖 AI-filtering {len(all_issues)} issues for relevance...")
+        
+        try:
+            # Process issues in batches to avoid token limits
+            batch_size = 5
+            batches = [all_issues[i:i + batch_size] for i in range(0, len(all_issues), batch_size)]
+            
+            for batch in batches:
+                relevance_scores = await self._get_ai_issue_relevance(current_title, current_body, batch)
+                
+                for i, issue in enumerate(batch):
+                    if i < len(relevance_scores) and relevance_scores[i] >= 7:  # High relevance threshold
+                        # Add clickable GitHub URL
+                        issue_url = f"https://github.com/{issue.get('repo_name', 'microsoft/mssql-jdbc')}/issues/{issue['number']}"
+                        issue["url"] = issue_url
+                        issue["relevance_score"] = relevance_scores[i]
+                        related.append(issue)
+            
+            # Sort by relevance score and return top matches
+            related.sort(key=lambda x: x["relevance_score"], reverse=True)
+            print(f"✅ Found {len(related)} highly relevant issues using AI filtering")
+            return related[:10]  # Return top 10 most relevant issues
+            
+        except Exception as e:
+            print(f"⚠️ AI issue filtering failed, falling back to keyword matching: {e}")
+            return self._fallback_issue_filtering(all_issues, current_issue)
+
+    async def _get_ai_issue_relevance(self, current_title: str, current_body: str, issues_batch: List[Dict]) -> List[int]:
+        """Use AI to determine relevance scores for a batch of issues"""
+        try:
+            issues_text = ""
+            for i, issue in enumerate(issues_batch):
+                issues_text += f"{i+1}. Issue #{issue['number']}: {issue['title'][:100]}\n"
+                if issue.get('body'):
+                    issues_text += f"   Description: {issue['body'][:200]}...\n"
+                issues_text += "\n"
+            
+            prompt = f"""Current Issue:
+Title: {current_title}
+Description: {current_body[:500]}
+
+Compare this current issue with the following issues and rate their relevance on a scale of 1-10:
+{issues_text}
+
+Rate how relevant each issue is to the current issue. Consider:
+- Similar technical problems or error messages
+- Same components/features affected
+- Related functionality or use cases
+- Similar root causes or symptoms
+
+Respond with only the numbers (1-10) separated by commas, one score per issue in order.
+Example: 8,3,9,1,6"""
+
+            response = self.client.chat.completions.create(
+                model=self.deployment_name,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=100
+            )
+            
+            scores_text = response.choices[0].message.content.strip()
+            scores = [int(s.strip()) for s in scores_text.split(',') if s.strip().isdigit()]
+            
+            # Ensure we have the right number of scores
+            while len(scores) < len(issues_batch):
+                scores.append(1)
+            
+            return scores[:len(issues_batch)]
+            
+        except Exception as e:
+            print(f"Error in AI issue relevance scoring: {e}")
+            return [5] * len(issues_batch)  # Default moderate scores
+
+    def _fallback_issue_filtering(self, all_issues: List[Dict], current_issue: Dict) -> List[Dict]:
+        """Fallback keyword-based issue filtering"""
         related = []
         current_title = current_issue.get('issue_title', '').lower()
         current_body = current_issue.get('issue_body', '').lower()
@@ -350,6 +577,9 @@ class AIService:
                     
             # If similarity score is high enough, it's related
             if similarity_score >= 4:  # Lower threshold for more relevant results
+                # Add clickable GitHub URL
+                issue_url = f"https://github.com/{issue.get('repo_name', 'microsoft/mssql-jdbc')}/issues/{issue['number']}"
+                issue["url"] = issue_url
                 issue["similarity_score"] = similarity_score
                 related.append(issue)
         
@@ -643,10 +873,14 @@ class AIService:
 
         # Highly relevant issues
         if related_issues:
-            prompt_parts.append("**Most Relevant Reference Repository Issues:**")
+            prompt_parts.append("**Most Relevant Reference Repository Issues (AI-filtered):**")
             for issue in related_issues[:6]:
                 state_indicator = "🔴 OPEN" if issue['state'] == 'open' else "✅ RESOLVED"
-                prompt_parts.append(f"- {state_indicator} #{issue['number']}: {issue['title']} (relevance: {issue['similarity_score']})")
+                default_url = f"https://github.com/microsoft/mssql-jdbc/issues/{issue['number']}"
+                issue_url = issue.get('url', default_url)
+                issue_link = f"[#{issue['number']}]({issue_url})"
+                relevance_score = issue.get('relevance_score', issue.get('similarity_score', 'N/A'))
+                prompt_parts.append(f"- {state_indicator} {issue_link}: {issue['title']} (AI relevance: {relevance_score}/10)")
                 if issue.get('body') and len(issue['body']) > 50:
                     prompt_parts.append(f"  Context: {issue['body'][:180]}...")
                 if issue['state'] == 'closed':
@@ -656,9 +890,12 @@ class AIService:
         # Recent development activity
         if reference_commits:
             prompt_parts.append("**Recent Reference Repository Development Activity:**")
-            prompt_parts.append("📋 Recent relevant commits:")
+            ai_filtered_count = len([c for c in reference_commits if c.get('ai_filtered', False)])
+            prompt_parts.append(f"📋 Recent relevant commits (AI-filtered: {ai_filtered_count}/{len(reference_commits)}):")
             for commit in reference_commits[:6]:
-                prompt_parts.append(f"- {commit['sha']}: {commit['message'][:120]}... (by {commit['author']})")
+                commit_link = f"[{commit['sha']}]({commit['url']})"
+                ai_badge = " 🤖" if commit.get('ai_filtered', False) else ""
+                prompt_parts.append(f"- {commit_link}: {commit['message'][:120]}... (by {commit['author']}){ai_badge}")
             prompt_parts.append("")
 
         # Current issues landscape
@@ -722,22 +959,12 @@ class AIService:
         prompt_parts.append("   - Specific technical considerations")
         prompt_parts.append("   - Version compatibility and recommendations")
         prompt_parts.append("")
-        prompt_parts.append("5. **Best Practices & Prevention** (5-7 recommendations)")
-        prompt_parts.append("   - Technical best practices")
-        prompt_parts.append("   - Performance optimization")
-        prompt_parts.append("   - Monitoring and maintenance")
-        prompt_parts.append("   - Common pitfall prevention")
-        prompt_parts.append("")
-        prompt_parts.append("6. **Testing & Validation** (4-6 approaches)")
-        prompt_parts.append("   - Testing strategies")
-        prompt_parts.append("   - Validation approaches")
-        prompt_parts.append("   - Performance benchmarking")
-        prompt_parts.append("   - Monitoring and alerting setup")
-        prompt_parts.append("")
         
         prompt_parts.append("**EXPERT OUTPUT REQUIREMENTS:**")
         prompt_parts.append("- COMPREHENSIVE EXPERT RESPONSE (aim for 4500+ characters)")
-        prompt_parts.append("- Reference specific issue numbers and commit SHAs from analysis above")
+        prompt_parts.append("- Reference ONLY highly relevant issue numbers and commit links from analysis above")
+        prompt_parts.append("- Use markdown format: [commit_sha](commit_url) for clickable commit references")
+        prompt_parts.append("- Verify commit relevance before referencing - only include commits directly related to the issue")
         prompt_parts.append("- Include multiple practical code examples")
         prompt_parts.append("- Provide expert-level implementation guidance with exact parameters")
         prompt_parts.append("- Connect solution to proven patterns and best practices")
