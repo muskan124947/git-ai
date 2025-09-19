@@ -1,156 +1,111 @@
-# GitHub AI Issue Assistant Setup Guide
+# ⚡ Git.AI – The AI Copilot for Maintainers  
 
-This guide documents all steps required to set up, run, and use the GitHub AI Issue Assistant bot that posts AI-generated resolution steps as comments on new GitHub issues.
+Maintaining open-source projects is tough: endless issues, duplicates, vague bug reports, and overwhelming triage.  
+**Git.AI changes the game.**  
+
+It’s an **AI-powered GitHub assistant** that automatically:  
+- ✅ Summarizes new issues in plain English.  
+- ✅ Detects duplicates & similar past issues.  
+- ✅ Drafts actionable resolution steps for maintainers.  
+- ✅ Brings in context from commits, docs, and repo history.  
+
+So maintainers can focus on **solutions**, not repetitive triage.  
 
 ---
 
-## 1. Prerequisites
+## 🌟 Why Git.AI?  
 
-- Python 3.7+
-- [pip](https://pip.pypa.io/en/stable/)
-- [ngrok](https://ngrok.com/download)
-- Azure OpenAI resource (with a deployed model)
-- GitHub repository where you want to use the bot
+- 🔹 **Save Time** – No more digging through old issues or explaining the same bug.  
+- 🔹 **Smarter Triaging** – AI detects patterns across commits & issues.  
+- 🔹 **Actionable Guidance** – Resolution drafts tuned for bugs, features, docs, or questions.  
+- 🔹 **Repository-Aware** – Pulls real repo context, not generic AI replies.  
+- 🔹 **Plug-and-Play** – Works directly via GitHub webhooks.  
+
+Git.AI isn’t just a helper. It’s your **engineering co-pilot** for issue management.  
 
 ---
 
-## 2. Clone the Repository
+## 🛠️ How It Works (Workflow)  
 
-```sh
-git clone <your-repo-url>
-cd git-ai
+```mermaid
+flowchart TD
+    A[New GitHub Issue/Event] --> B[Webhook Triggered]
+    B --> C[Context Collection]
+    C --> D[AI-Powered Insights]
+    D --> E[Maintainer Assistance]
+
+    C -->|Fetches| C1[Repo Metadata]
+    C -->|Analyzes| C2[Commits & Issues]
+    C -->|Reads| C3[Documentation]
+
+    D -->|Summarizes| D1[Issue Summary]
+    D -->|Detects| D2[Similar/Duplicate Issues]
+    D -->|Generates| D3[Resolution Draft]
+
+    E -->|Posts Back to| F[GitHub Issue Thread]
+```
+
+1. **GitHub Webhook Fires** – A new issue/event triggers Git.AI.  
+2. **Context Collection** – Fetches repo metadata, commits, issues, and docs.  
+3. **AI Insights** – Summarizes the issue, finds duplicates, drafts resolutions.  
+4. **Maintainer Assistance** – Posts results directly into GitHub.  
+
+---
+
+## ⚙️ Requirements  
+
+- **Python 3.9+**  
+- **FastAPI** backend  
+- **Azure OpenAI API access**  
+- **GitHub App credentials**  
+
+Install dependencies:  
+```bash
+pip install -r requirements.txt
 ```
 
 ---
 
-## 3. Python Dependencies
+## 🚀 Setup  
 
-Install required packages:
+1. **Clone the repo**  
+   ```bash
+   git clone https://github.com/your-username/git.ai.git
+   cd git.ai
+   ```
 
-```sh
-pip install fastapi uvicorn httpx python-dotenv PyGithub openai
-```
+2. **Configure environment variables in `.env`:**  
 
----
+   ```env
+   AZURE_OPENAI_API_KEY=your_azure_api_key
+   AZURE_OPENAI_ENDPOINT=your_azure_endpoint
+   AZURE_OPENAI_DEPLOYMENT_NAME=gpt-35-turbo
+   AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
 
-## 4. Azure OpenAI Setup
+   GITHUB_APP_ID=your_app_id
+   GITHUB_INSTALLATION_ID=your_installation_id
+   GITHUB_PRIVATE_KEY_PATH=git-ai-bot.pem
+   ```
 
-- Go to Azure Portal → your OpenAI resource.
-- Deploy a model (e.g., GPT-4, GPT-3.5).
-- Copy your **API key** and **endpoint** from the resource's "Keys and Endpoint" section.
+3. **Run the service**  
+   ```bash
+   uvicorn main:app --reload
+   ```
 
----
-
-## 5. GitHub App Setup (for bot comments)
-
-1. Go to [GitHub Apps](https://github.com/settings/apps) and create a new app.
-2. Set permissions:
-   - Repository permissions → Issues: **Read & write**
-3. Set a webhook URL (can use `https://example.com/webhook` if not needed).
-4. Install the app on your target repository.
-5. Download the app's private key (`.pem` file).
-6. Note your **App ID** and **Installation ID**.
-
----
-
-## 6. Generate GitHub App Installation Token
-
-Create `get_github_app_token.py`:
-
-```python
-from github import GithubIntegration
-
-APP_ID = <your-app-id>
-INSTALLATION_ID = <your-installation-id>
-PRIVATE_KEY_PATH = "git-ai-bot.pem"
-
-with open(PRIVATE_KEY_PATH, "r") as key_file:
-    private_key = key_file.read()
-
-git_integration = GithubIntegration(APP_ID, private_key)
-access_token = git_integration.get_access_token(INSTALLATION_ID).token
-print(access_token)
-```
-
-Run:
-
-```sh
-pip install PyGithub
-python get_github_app_token.py
-```
-
-Copy the printed token.
+4. **Connect GitHub webhook**  
+   - Expose your service (e.g., with ngrok).  
+   - Set the webhook in your GitHub App to point to `/webhook`.  
 
 ---
 
-## 7. Configure Environment Variables
+## 🔮 Future Superpowers  
 
-Edit `.env`:
+- 🧠 **AI-driven PR suggestions** (automatic patch drafts).  
+- 🌍 **Multi-language issue support** (non-English repos).  
+- 📊 **Dashboard for maintainers** to view AI insights.  
+- 🔁 **Smarter duplicate clustering** using semantic embeddings.  
+- 🔔 **Slack/Discord notifications** for real-time triage help.  
 
-```properties
-AZURE_OPENAI_API_KEY=<your-azure-openai-key>
-AZURE_OPENAI_ENDPOINT=<your-azure-openai-endpoint>
-AZURE_OPENAI_DEPLOYMENT_NAME=<your-deployment-name>
-GITHUB_TOKEN=<your-github-app-installation-token>
-```
 
----
 
-## 8. Start FastAPI Server
-
-```sh
-uvicorn main:app --reload
-```
-
----
-
-## 9. Expose Local Server with ngrok
-
-```sh
-ngrok http 8000
-```
-
-Copy the HTTPS forwarding URL.
-
----
-
-## 10. Set Up GitHub Webhook
-
-- Go to your repo → Settings → Webhooks → Add webhook.
-- Payload URL: `<ngrok-forwarding-url>/webhook`
-- Content type: `application/json`
-- Select "Issues" events.
-
----
-
-## 11. Usage
-
-- Create a new issue in your GitHub repo.
-- The bot will generate resolution steps using Azure OpenAI and post them as a comment (authored by your GitHub App/bot).
-- All logs are saved in `gitai.log`.
-
----
-
-## 12. Troubleshooting
-
-- Check `gitai.log` for detailed logs and errors.
-- Ensure all environment variables are set correctly.
-- Make sure your Azure OpenAI deployment is running.
-- The GitHub App must have "Issues: Read & write" permission and be installed on the repo.
-
----
-
-## 13. Customization
-
-- Edit prompts and fallback logic in `ai_service.py`.
-- Change logging settings in `main.py`.
-
----
-
-## 14. Credits
-
-- Built with FastAPI, Azure OpenAI, GitHub Apps, and ngrok.
-
----
-
-For questions or help, contact the repository maintainer.
+✨ **Git.AI = Less triage. More innovation. Faster open source.**
